@@ -1,0 +1,108 @@
+{
+  "config": {
+    "sample_period_ns": 100000000,
+    "window_size": 50,
+    "window_stride": 5,
+    "calibration_history_s": 30.0,
+    "calibration_update_every_samples": 10,
+    "minimum_calibration_samples": 5,
+    "label_alignment_tolerance_ms": 75.0,
+    "max_gap_ns": 250000000,
+    "max_linear_acceleration_mps2": 30.0,
+    "max_angular_velocity_radps": 12.0,
+    "minimum_calibration_confidence": 0.6,
+    "seed": 42,
+    "train_fraction": 0.7,
+    "validation_fraction": 0.15,
+    "test_fraction": 0.15,
+    "batch_size": 256,
+    "max_epochs": 50,
+    "early_stopping_patience": 8,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "cv_folds": 3,
+    "tuning_max_epochs": 25,
+    "tuning_early_stopping_patience": 5,
+    "final_max_epochs": 50,
+    "inference_warmup_calls": 30,
+    "inference_measurement_calls": 200
+  },
+  "feature_names": [
+    "linear_acceleration_x_mps2",
+    "linear_acceleration_y_mps2",
+    "linear_acceleration_z_mps2",
+    "angular_velocity_x_radps",
+    "angular_velocity_y_radps",
+    "angular_velocity_z_radps"
+  ],
+  "feature_unit_order": [
+    "m/s^2",
+    "m/s^2",
+    "m/s^2",
+    "rad/s",
+    "rad/s",
+    "rad/s"
+  ],
+  "target_unit": "m/s",
+  "development_journeys": [
+    "S2",
+    "S3c",
+    "S4",
+    "Vfa02",
+    "Vta14",
+    "Vta15",
+    "Vta1a",
+    "Vta2",
+    "Vta21",
+    "Vta22",
+    "Vta23",
+    "Vta26",
+    "Vta28",
+    "Vta29",
+    "Vta30",
+    "Y1"
+  ],
+  "test_journeys": [
+    "M",
+    "S1",
+    "S3a",
+    "S3b",
+    "Vfa01",
+    "Vta10",
+    "Vta13",
+    "Vta16",
+    "Vta17",
+    "Vta1b",
+    "Vta27",
+    "Vta8"
+  ],
+  "selected_parameters": {
+    "gru": {
+      "hidden_size": 64,
+      "layers": 2,
+      "dropout": 0.2,
+      "learning_rate": 0.001
+    },
+    "cnn": {
+      "channels": [
+        32,
+        64,
+        64
+      ],
+      "dropout": 0.2,
+      "learning_rate": 0.001
+    },
+    "random_forest": {
+      "n_estimators": 300,
+      "max_depth": 16,
+      "min_samples_leaf": 3
+    }
+  },
+  "cv_selection_metric": "macro journey MAE in m/s",
+  "inference_latency_definition": "single clean 50x6 window, feature scaling + model + target inverse-scaling; deterministic preprocessing excluded",
+  "notes": [
+    "Models were retrained from scratch on deterministic-pipeline output.",
+    "Rolling calibration evidence uses phone GPS speed, not the CAN-bus target.",
+    "The offline evidence heuristic is causal but must be replaced by validated production evidence rules before deployment."
+  ]
+}

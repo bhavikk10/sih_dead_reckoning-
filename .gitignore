@@ -1,0 +1,19 @@
+# This repository is not initialized as Git by the scaffold. Keep these local
+# artifacts out of any future repository initialization.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+dist/
+build/
+*.egg-info/
+data/raw/
+data/processed/
+data/cache/
+models/checkpoints/
+models/exports/
+*.onnx

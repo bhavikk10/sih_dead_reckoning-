@@ -1,0 +1,12 @@
+# Future phone profile.
+#
+# [sensors]
+# source = "phone"
+# accelerometer_rate_hz = 0
+# gyroscope_rate_hz = 0
+#
+# [calibration]
+# phone_to_vehicle = "dynamic"
+#
+# [runtime]
+# offline_only = true

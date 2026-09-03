@@ -1,0 +1,13 @@
+# Future model-training profile.
+#
+# [uncertainty]
+# objective = "gaussian_nll"
+# differentiable_ekf_fine_tuning = false
+#
+# [road_context]
+# backend = "lightgbm_or_xgboost"
+# output_quantiles = []
+#
+# [data]
+# train_split = ""
+# validation_split = ""

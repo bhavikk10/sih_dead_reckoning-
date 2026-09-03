@@ -1,0 +1,11 @@
+# Future external-IMU profile.
+#
+# [sensors]
+# source = "external_imu"
+# target_rate_hz = 200
+#
+# [calibration]
+# imu_to_vehicle = "configured_or_estimated"
+#
+# [runtime]
+# phone_compatibility_mode = false
