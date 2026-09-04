@@ -17,3 +17,4 @@ data/cache/
 models/checkpoints/
 models/exports/
 *.onnx
+/artifacts/

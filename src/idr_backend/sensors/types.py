@@ -76,6 +76,13 @@ class MeasurementUnit(StrEnum):
 # A 3D vector is always ordered as (x, y, z) in the sample's declared frame.
 Vector3 = tuple[float, float, float]
 
+# A 2D point in local East-North coordinates, ordered as (east, north).
+Vector2 = tuple[float, float]
+
+# A fixed 3×3 covariance matrix. Rows and columns follow the vector's frame.
+Matrix3 = tuple[Vector3, Vector3, Vector3]
+
+
 # Quaternion ordering is explicitly (w, x, y, z). Some libraries use a
 # different ordering, so the alias makes accidental mixing visible in reviews.
 QuaternionWxyz = tuple[float, float, float, float]
@@ -206,3 +213,176 @@ class VehicleImuSample:
     vehicle_to_navigation_wxyz: QuaternionWxyz
     calibration_confidence: float
 
+
+@dataclass(frozen=True, slots=True)
+class GnssFix:
+    """One raw position and motion observation from a GNSS receiver.
+
+    GNSS arrives slower than IMU and may disappear during a tunnel or urban
+    canyon. Missing GNSS must stay missing: dead reckoning is estimated later
+    by fusion, not fabricated in this input contract.
+    """
+
+    # Same monotonic session-time clock used by IMU. This lets us associate a
+    # nearby GNSS reading with sensor samples without relying on wall-clock time.
+    timestamp_ns: int
+
+    # Physical receiver identity, usually something like "phone-primary".
+    # This stays separate from SensorSource because a future external GNSS
+    # receiver is not necessarily an IMU device.
+    receiver_id: str
+
+    # Raw WGS-84 coordinates from the receiver. We keep degrees here; the GNSS
+    # adapter/fusion layer will project them into local ENU metres when needed.
+    latitude_deg: float
+    longitude_deg: float
+    altitude_m: float | None
+
+    # Receiver-reported position quality. None means the source did not supply
+    # it, not that accuracy is perfect or zero.
+    horizontal_accuracy_m: float | None
+    vertical_accuracy_m: float | None
+
+    # Optional receiver motion observations. Speed is SI m/s. Course is the
+    # usual GNSS course-over-ground: clockwise from true north, in radians.
+    # It describes movement direction, not phone orientation.
+    speed_mps: float | None = None
+    speed_accuracy_mps: float | None = None
+    course_over_ground_rad: float | None = None
+    course_accuracy_rad: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VelocityObservation:
+    """One scalar speed prediction produced from a clean IMU window.
+
+    This is the velocity engine's estimate only. Its uncertainty is deliberately
+    separate, because the uncertainty engine owns variance estimation.
+    """
+
+    # Timestamp at the end of the causal IMU window used for this prediction.
+    timestamp_ns: int
+
+    # Identifies the IMU device whose clean samples formed the input window.
+    source_id: str
+
+    # Makes the model input interval auditable during replay and debugging.
+    window_start_timestamp_ns: int
+
+    # Predicted ground-speed magnitude, never a three-dimensional velocity.
+    speed_mps: float
+
+    # Versioned model identity, for example "gru-v1" or "cnn-v1".
+    model_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class UncertaintyEstimate:
+    """Calibrated uncertainty associated with one velocity prediction.
+
+    The uncertainty engine publishes the final usable variance after applying
+    learned heteroscedastic prediction and deterministic safety bounds.
+    """
+
+    timestamp_ns: int
+
+    # Must point to the exact VelocityObservation this variance belongs to.
+    velocity_observation_timestamp_ns: int
+    model_id: str
+
+    # Variance of scalar speed, with units (m/s)^2 = m²/s².
+    speed_variance_m2ps2: float
+
+    # Lets replay/debugging distinguish a calibrated learned value from a
+    # temporary fallback before the uncertainty model is ready.
+    is_calibrated: bool
+    used_heuristic_bound: bool
+
+
+class TravelDirection(StrEnum):
+    """Allowed travel direction along a directed road-graph edge."""
+
+    FORWARD = "forward"
+    REVERSE = "reverse"
+
+
+@dataclass(frozen=True, slots=True)
+class RoadCandidate:
+    """One nearby directed road-edge hypothesis for map matching."""
+
+    timestamp_ns: int
+
+    # Stable identity within one candidate-generation step.
+    candidate_id: str
+
+    # Identifies the offline graph and the directed OSM-derived edge.
+    graph_id: str
+    edge_id: str
+    travel_direction: TravelDirection
+
+    # Nearest point on that road in the local ENU map frame.
+    snap_position_enu_m: Vector2
+
+    # Geometric evidence before HMM emission scoring.
+    lateral_distance_m: float
+    road_heading_enu_rad: float
+
+
+@dataclass(frozen=True, slots=True)
+class RoadContextPrior:
+    """Road-derived speed prior for one candidate, using prior-cycle HMM belief.
+
+    It is produced from road rules and future quantile ML. Its belief timestamp
+    must be older than the current step, avoiding a same-timestep feedback loop.
+    """
+
+    timestamp_ns: int
+    source_belief_timestamp_ns: int
+
+    candidate_id: str
+    edge_id: str
+
+    # Quantile-model speed outputs. The later rules/model layer must guarantee
+    # p10 <= p50 <= p90 before publishing this object.
+    speed_p10_mps: float
+    speed_p50_mps: float
+    speed_p90_mps: float
+
+    # Explicit legal/rule bound when known; None means no usable map rule.
+    rule_speed_limit_mps: float | None
+
+    # Confidence in this road hypothesis/prior, from 0.0 to 1.0.
+    confidence: float
+
+
+class NavigationMode(StrEnum):
+    """How strongly the navigation estimate is currently GNSS-aided."""
+
+    GNSS_AIDED = "gnss_aided"
+    DEAD_RECKONING = "dead_reckoning"
+    RECOVERY = "recovery"
+
+
+@dataclass(frozen=True, slots=True)
+class NavigationEstimate:
+    """Navigation state published after fusion and optional map matching."""
+
+    timestamp_ns: int
+    mode: NavigationMode
+
+    # Local East-North-Up position and velocity estimated by the EKF.
+    position_enu_m: Vector3
+    velocity_enu_mps: Vector3
+
+    # Vehicle orientation relative to ENU, ordered as (w, x, y, z).
+    vehicle_to_navigation_wxyz: QuaternionWxyz
+
+    # Small output covariance summaries. The full 15×15 EKF covariance remains
+    # internal to fusion; callers normally need these physically meaningful parts.
+    position_covariance_enu_m2: Matrix3
+    velocity_covariance_enu_m2ps2: Matrix3
+    heading_variance_rad2: float
+
+    # Filled only when map matching has enough belief to publish a road result.
+    matched_road_edge_id: str | None
+    map_match_confidence: float | None
