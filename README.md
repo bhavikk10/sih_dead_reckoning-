@@ -13,8 +13,10 @@ as a downstream-only composition.
 
 The repository is a Python library and offline-replay tool today. It does
 **not** yet expose an HTTP or WebSocket service for a mobile client. Road
-context is in progress: its offline data, matching, and static-feature work is
-implemented, but its quantile model and EKF update are not yet part of runtime.
+context is in progress: its offline dataset/matching/static-feature pipeline,
+empirical and LightGBM quantile-model contracts, safety rules, candidate
+mixture, grouped evaluation, and calibration gate are implemented. It has no
+trained production artifact and is not yet connected to runtime or the EKF.
 
 ## Runtime data flow
 
@@ -36,8 +38,9 @@ are held aside as offline replay references; they are never fed into fusion.
   constraints, covariance, and runtime policies.
 - `src/idr_backend/map_matching/` contains graph, candidate, scoring, and HMM
   components.
-- `src/idr_backend/road_context/` contains in-progress offline preparation
-  contracts only.
+- `src/idr_backend/road_context/` contains the in-progress offline
+  road-context dataset, feature, quantile-model, mixture, split, evaluation,
+  and experiment layers. It is not a runtime fusion feature.
 - `src/idr_backend/evaluation/` contains causal raw-replay evaluation.
 - `scripts/replay.py` runs one complete designated demo replay.
 

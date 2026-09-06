@@ -12,13 +12,20 @@
   supplies a soft plausibility prior, never a replacement position estimate.
 - Road context consumes the previous HMM belief and candidate roads, avoiding a
   same-cycle map-matching/fusion circular dependency.
+- LightGBM is the initial learned road-context quantile implementation. It fits
+  separate q10/q50/q90 models over static road features only, with quantile
+  ordering repaired at prediction time. The empirical road-class model remains
+  the required leakage/debug baseline.
+- Road-context model selection uses both journey-held-out and directed-edge-
+  held-out folds, with fold-local journey-balanced sample weights.
 
 ## Intentionally unresolved
 
-- LightGBM versus XGBoost is not selected. Both are declared dependencies so a
-  future comparison can use one common quantile-model abstraction.
-- Exact road city, offline-map extract, dataset sources, and feature schema are
-  deferred until data quality is assessed.
+- XGBoost is not yet implemented or compared under the same grouped-fold
+  protocol; it remains an optional later challenger, not the selected path.
+- Exact road city, offline-map extract, external dataset sources, and the
+  optional time/junction/signal feature expansion remain deferred. The initial
+  static directed-edge feature schema is implemented.
 - EKF frame convention, tuning, gating policy, and measurement equations are
   deferred until the implementation design stage.
 - The scope of external high-rate IMU support is deferred, but adapters and the

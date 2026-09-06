@@ -1,7 +1,22 @@
-# Future validation plan
+# Validation status and remaining plan
 
-No tests are implemented in this scaffold. Before functionality is accepted,
-the backend must add evidence for the following areas.
+The repository contains executable deterministic and road-context unit tests.
+Passing those tests proves local contracts, not production navigation accuracy
+or road-context readiness for fusion.
+
+## Implemented road-context unit evidence
+
+- Dataset/matching/feature tests cover provenance boundaries and static feature
+  construction.
+- Rules, raw q10/q50/q90 validation, candidate-mixture uncertainty, and
+  omission dispositions are unit tested.
+- Grouped journey and directed-edge splits, fold-local weights, metrics,
+  calibration gates, and the empirical out-of-fold experiment runner are unit
+  tested.
+- The LightGBM quantile predictor has a dedicated test module; it requires the
+  declared LightGBM dependency in the active environment.
+
+## Remaining evidence before functionality is accepted
 
 ## Deterministic pipeline
 
@@ -19,6 +34,13 @@ the backend must add evidence for the following areas.
   calibration curves, and conservative heuristic fallback behavior.
 - Check road-context quantile ordering, rule gating, speed-limit quality
   caveats, unseen-road behavior, and disconnected/ambiguous road candidates.
+- Build the real first-party road-context table and run both journey-held-out
+  and directed-edge-held-out experiments.
+- Record p50 MAE, pinball loss, p10-p90 coverage, interval width, and worst
+  journey/road-class outcomes. A nominal 80% interval must pass its calibration
+  gate on untouched grouped data.
+- Compare the empirical baseline and LightGBM under the identical folds before
+  selecting or exporting any learned artifact.
 
 ## End-to-end replay
 
@@ -26,3 +48,6 @@ the backend must add evidence for the following areas.
 - Test HMM ambiguity where parallel roads, service roads, and junctions compete.
 - Measure trajectory and endpoint drift, latency, mode transitions, and
   degradation when velocity or road-context inputs are missing.
+- Keep road context shadow-only until candidate inference, low-rate injection,
+  NIS/covariance/rate gates, and downstream blackout replay all demonstrate a
+  non-regressing result.

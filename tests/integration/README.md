@@ -1,5 +1,6 @@
-# Integration-test placeholder
+# Integration tests
 
-Future tests will replay synchronized observations through the complete pipeline
-and exercise GNSS blackouts, recovery, road ambiguity, and unavailable optional
-inputs.
+Integration tests exercise replay and pipeline composition. Remaining coverage
+includes broader synchronized-replay fixtures, GNSS blackouts/recovery, road
+ambiguity, unavailable optional inputs, and—only after road context is wired in
+behind a flag—shadow and controlled-fusion replay cases.
