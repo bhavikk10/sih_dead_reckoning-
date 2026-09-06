@@ -1,5 +1,18 @@
-"""Offline road-graph and incremental map-matching boundary.
+"""Offline road-graph and bounded causal map-matching boundary."""
 
-TODO: keep map matching causal enough for navigation while retaining a bounded
-history window for route continuity and ambiguity resolution.
-"""
+from .candidates import CandidateGenerationConfig, RoadCandidateGenerator
+from .graph import RoadGraph
+from .pipeline import IncrementalMapMatchingPipeline, MapMatchingCycleResult
+from .scoring import MapMatchingScoringConfig
+from .viterbi import IncrementalViterbiConfig, IncrementalViterbiMatcher
+
+__all__ = (
+    "CandidateGenerationConfig",
+    "IncrementalMapMatchingPipeline",
+    "IncrementalViterbiConfig",
+    "IncrementalViterbiMatcher",
+    "MapMatchingCycleResult",
+    "MapMatchingScoringConfig",
+    "RoadCandidateGenerator",
+    "RoadGraph",
+)

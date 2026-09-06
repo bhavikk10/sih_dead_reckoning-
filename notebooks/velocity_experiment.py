@@ -74,6 +74,27 @@ CONTEXT_FEATURE_NAMES = (
 )
 
 
+def _integrate_trapezoid(values: np.ndarray, *, dx: float) -> float:
+    """Integrate a one-dimensional signal without NumPy-version-specific APIs."""
+
+    samples = np.asarray(values, dtype=float)
+    if samples.ndim != 1:
+        raise ValueError("Trapezoidal integration expects one-dimensional data.")
+    if not np.isfinite(dx) or dx <= 0.0:
+        raise ValueError("dx must be finite and positive.")
+    if len(samples) < 2:
+        return 0.0
+
+    return float(
+        dx
+        * (
+            0.5 * samples[0]
+            + samples[1:-1].sum()
+            + 0.5 * samples[-1]
+        )
+    )
+
+
 @dataclass(frozen=True)
 class ExperimentConfig:
     """All choices that affect examples, folds, training, or timing.
@@ -626,7 +647,10 @@ def build_blackout_dataset(
                     # Trapezoidal integration uses every cleaned forward-
                     # acceleration sample since the GNSS anchor.  It is the
                     # deterministic baseline that the residual model corrects.
-                    delta_speed = float(np.trapezoid(acceleration, dx=config.sample_period_s))
+                    delta_speed = _integrate_trapezoid(
+                        acceleration,
+                        dx=config.sample_period_s,
+                    )
                     integrated_speed = max(0.0, anchor_speed + delta_speed)
                     confidence_slice = journey.calibration_confidence[anchor : end + 1]
                     target = float(journey.target_speed_mps[end])
@@ -698,11 +722,9 @@ def preprocessing_physics_audit(
                 observed_delta = (
                     journey.target_speed_mps[end] - journey.target_speed_mps[start]
                 )
-                integrated_delta = float(
-                    np.trapezoid(
-                        journey.clean_imu[start : end + 1, 0],
-                        dx=config.sample_period_s,
-                    )
+                integrated_delta = _integrate_trapezoid(
+                    journey.clean_imu[start : end + 1, 0],
+                    dx=config.sample_period_s,
                 )
                 integration_errors.append(abs(integrated_delta - observed_delta))
 

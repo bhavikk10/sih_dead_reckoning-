@@ -6,6 +6,7 @@ acceptable samples and never bridges a quality failure or sensor gap.
 """
 
 
+from dataclasses import dataclass
 from math import acos, isfinite, sin
 
 from .orientation import normalize_quaternion
@@ -16,6 +17,33 @@ from .types import (
     Vector3,
     VehicleImuSample,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ResampledVehicleImuSample:
+    """One fixed-rate IMU sample and the conservative quality facts it inherits.
+
+    Interpolation is allowed only between two acceptable real samples. The
+    output therefore keeps the lower endpoint score and union of endpoint
+    flags, so it never appears healthier than the readings that bound it.
+    """
+
+    sample: VehicleImuSample
+    quality: VehicleImuQuality
+
+    def __post_init__(self) -> None:
+        """Ensure the quality report belongs to this exact emitted sample."""
+
+        if (
+            self.quality.timestamp_ns != self.sample.timestamp_ns
+            or self.quality.source != self.sample.source
+            or self.quality.source_id != self.sample.source_id
+        ):
+            raise ValueError(
+                "Resampled quality must belong to the exact emitted IMU sample."
+            )
+        if not self.quality.is_acceptable:
+            raise ValueError("Resampled output must have acceptable quality.")
 
 
 def _interpolate_vector(
@@ -153,6 +181,35 @@ def _interpolate_vehicle_imu_sample(
     )
 
 
+def _interpolate_quality(
+    *,
+    before: VehicleImuQuality,
+    after: VehicleImuQuality,
+    timestamp_ns: int,
+) -> VehicleImuQuality:
+    """Carry conservative endpoint quality facts to an interpolated point."""
+
+    if before.source != after.source or before.source_id != after.source_id:
+        raise ValueError("Cannot combine quality from different IMU devices.")
+    if not before.is_acceptable or not after.is_acceptable:
+        raise ValueError("Interpolation requires two quality-accepted endpoints.")
+
+    intervals = tuple(
+        interval
+        for interval in (before.sample_interval_ns, after.sample_interval_ns)
+        if interval is not None
+    )
+    return VehicleImuQuality(
+        timestamp_ns=timestamp_ns,
+        source=before.source,
+        source_id=before.source_id,
+        flags=before.flags | after.flags,
+        sample_interval_ns=max(intervals) if intervals else None,
+        score=min(before.score, after.score),
+        is_acceptable=True,
+    )
+
+
 class FixedRateVehicleImuResampler:
     """Causally resample one acceptable vehicle IMU stream at a fixed period."""
 
@@ -170,6 +227,7 @@ class FixedRateVehicleImuResampler:
         self._source_id: str | None = None
         self._last_received_timestamp_ns: int | None = None
         self._previous_sample: VehicleImuSample | None = None
+        self._previous_quality: VehicleImuQuality | None = None
         self._next_output_timestamp_ns: int | None = None
 
 
@@ -197,7 +255,7 @@ class FixedRateVehicleImuResampler:
         self,
         sample: VehicleImuSample,
         quality: VehicleImuQuality,
-    ) -> tuple[VehicleImuSample, ...]:
+    ) -> tuple[ResampledVehicleImuSample, ...]:
         """Accept one cleaned sample and emit any newly available grid samples."""
 
         if (
@@ -225,34 +283,48 @@ class FixedRateVehicleImuResampler:
         # calibration. The next acceptable sample starts a fresh window.
         if not quality.is_acceptable:
             self._previous_sample = None
+            self._previous_quality = None
             self._next_output_timestamp_ns = None
             return ()
 
         if self._previous_sample is None:
             self._previous_sample = sample
+            self._previous_quality = quality
             self._next_output_timestamp_ns = (
                 sample.timestamp_ns + self._target_period_ns
             )
 
             # The first accepted real sample anchors this new fixed-rate grid.
-            return (sample,)
+            return (ResampledVehicleImuSample(sample=sample, quality=quality),)
 
-        output_samples: list[VehicleImuSample] = []
+        if self._previous_quality is None:
+            raise RuntimeError("Accepted previous IMU sample has no quality report.")
+
+        output_samples: list[ResampledVehicleImuSample] = []
 
         while (
             self._next_output_timestamp_ns is not None
             and self._next_output_timestamp_ns <= sample.timestamp_ns
         ):
-            output_samples.append(
-                _interpolate_vehicle_imu_sample(
+            resampled_sample = _interpolate_vehicle_imu_sample(
                     self._previous_sample,
                     sample,
                     self._next_output_timestamp_ns,
+                )
+            output_samples.append(
+                ResampledVehicleImuSample(
+                    sample=resampled_sample,
+                    quality=_interpolate_quality(
+                        before=self._previous_quality,
+                        after=quality,
+                        timestamp_ns=resampled_sample.timestamp_ns,
+                    ),
                 )
             )
             self._next_output_timestamp_ns += self._target_period_ns
 
         self._previous_sample = sample
+        self._previous_quality = quality
 
         return tuple(output_samples)
 
@@ -264,5 +336,6 @@ class FixedRateVehicleImuResampler:
         self._source_id = None
         self._last_received_timestamp_ns = None
         self._previous_sample = None
+        self._previous_quality = None
         self._next_output_timestamp_ns = None
 

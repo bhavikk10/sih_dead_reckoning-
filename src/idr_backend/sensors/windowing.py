@@ -9,6 +9,8 @@ from collections import deque
 from dataclasses import dataclass
 from math import isfinite
 
+from .quality import VehicleImuQuality
+from .resampling import ResampledVehicleImuSample
 from .types import SensorSource, VehicleImuSample
 
 
@@ -31,6 +33,7 @@ class VelocityModelInputWindow:
     source_id: str
     sample_period_ns: int
     samples: tuple[VehicleImuSample, ...]
+    final_quality: VehicleImuQuality
 
     def __post_init__(self) -> None:
         """Validate that all samples form one chronological model window."""
@@ -45,6 +48,17 @@ class VelocityModelInputWindow:
             raise ValueError(
                 "end_timestamp_ns must equal the final sample timestamp."
             )
+
+        if (
+            self.final_quality.timestamp_ns != self.end_timestamp_ns
+            or self.final_quality.source != self.source
+            or self.final_quality.source_id != self.source_id
+        ):
+            raise ValueError(
+                "final_quality must belong to the final sample in this window."
+            )
+        if not self.final_quality.is_acceptable:
+            raise ValueError("A velocity-model window requires acceptable quality.")
 
         previous_timestamp_ns: int | None = None
 
@@ -124,7 +138,7 @@ class CausalVehicleImuWindowBuilder:
         self._source_id: str | None = None
         self._last_timestamp_ns: int | None = None
 
-        self._samples: deque[VehicleImuSample] = deque(
+        self._samples: deque[ResampledVehicleImuSample] = deque(
             maxlen=window_size
         )
 
@@ -151,9 +165,11 @@ class CausalVehicleImuWindowBuilder:
 
     def push(
         self,
-        sample: VehicleImuSample,
+        resampled: ResampledVehicleImuSample,
     ) -> VelocityModelInputWindow | None:
         """Accept one resampled sample and emit a complete causal window if ready."""
+
+        sample = resampled.sample
 
         self._register_or_validate_stream(sample)
 
@@ -171,7 +187,7 @@ class CausalVehicleImuWindowBuilder:
                 # sample as the start of a new sequence, never join it to old data.
                 self._samples.clear()
 
-        self._samples.append(sample)
+        self._samples.append(resampled)
         self._last_timestamp_ns = sample.timestamp_ns
 
         if len(self._samples) < self._window_size:
@@ -182,7 +198,8 @@ class CausalVehicleImuWindowBuilder:
             source=sample.source,
             source_id=sample.source_id,
             sample_period_ns=self._sample_period_ns,
-            samples=tuple(self._samples),
+            samples=tuple(item.sample for item in self._samples),
+            final_quality=resampled.quality,
         )
 
 
