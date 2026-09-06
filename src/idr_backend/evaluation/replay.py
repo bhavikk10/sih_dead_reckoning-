@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass
 from math import isfinite, radians
 from pathlib import Path
 from time import perf_counter_ns
-from typing import Iterable
+from typing import Iterable, Literal
 
 import numpy as np
 import pandas as pd
@@ -500,6 +500,10 @@ def replay_journey(
     velocity_artifact_directory: Path,
     uncertainty_artifact_directory: Path,
     maximum_replay_duration_s: float | None = None,
+    velocity_model_family: Literal[
+        "anchor_delta_gru", "stateful_anchor_delta_gru"
+    ] = "anchor_delta_gru",
+    uncertainty_profile_filename: str = "anchor_delta_gru_deterministic_uncertainty.json",
 ) -> ReplayReport:
     """Replay raw callbacks through native preprocessing, ONNX, UQ, and EKF.
 
@@ -525,6 +529,8 @@ def replay_journey(
         artifacts=SelectedVelocityRuntimeArtifacts(
             velocity_artifact_directory=velocity_artifact_directory,
             uncertainty_artifact_directory=uncertainty_artifact_directory,
+            uncertainty_profile_filename=uncertainty_profile_filename,
+            model_family=velocity_model_family,
         ),
     )
     pipeline = NavigationFusionPipeline(

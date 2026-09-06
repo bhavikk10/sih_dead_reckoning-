@@ -1,6 +1,8 @@
 # Road-Context Speed-Prior Model: Design and Methodology
 
-**Status:** Proposed design, not yet implemented  
+**Status:** In progress — offline dataset, map-matching, and directed static
+feature contracts are implemented; the quantile model and all runtime fusion
+stages are not yet implemented.
 **Date:** 2026-09-06  
 **Scope:** Offline data preparation, candidate-level speed-quantile modelling,
 deterministic safety rules, runtime aggregation, EKF integration, validation,
@@ -34,6 +36,27 @@ that reduces implausible speed drift during GNSS blackouts, especially when one
 road hypothesis is clearly more plausible than its alternatives. Deployment is
 conditional on calibrated held-out quantiles and measurable downstream replay
 improvement.
+
+### Current implementation boundary
+
+The following offline-only pieces now exist under
+`src/idr_backend/road_context/`:
+
+- sparse raw-journey fact extraction with explicit target/quality provenance;
+- offline candidate-matching records and audit dispositions;
+- a model-feature boundary that rejects ambiguous, non-primary, invalid, or
+  non-finite facts;
+- static OSM/road-graph features for each *legal directed* traversal, including
+  road class, speed-limit availability, lane count, link/tunnel/bridge/
+  roundabout flags, length, curvature, and local graph degree.
+
+This work is deliberately parallel to the deterministic navigation pipeline.
+It has not changed live preprocessing, the selected velocity ONNX path, the
+EKF, or map-matching behaviour. There is currently no trained road-context
+quantile artifact, calibration result, candidate-mixture runtime component, or
+road-context EKF measurement. Until those stages pass the gates in this
+document, road context must be described as **in progress**, not as a deployed
+backend capability.
 
 ## 2. What the current dataset actually contains
 

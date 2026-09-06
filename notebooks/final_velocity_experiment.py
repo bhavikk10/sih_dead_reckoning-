@@ -1083,9 +1083,70 @@ def write_stateful_deterministic_uncertainty_profile(
     required = {"journey_id", "anchor_timestamp_ns", "end_timestamp_ns", "horizon_s", "actual_speed_mps", "prediction_speed_mps"}
     if not required.issubset(predictions.columns):
         raise ValueError("Stateful OOF predictions lack the required columns.")
-    merged = predictions.merge(frame, on=["journey_id", "anchor_timestamp_ns", "end_timestamp_ns", "horizon_s"], how="inner", validate="one_to_one")
+
+    # A persisted OOF frame crosses a CSV round trip in the resumable search.
+    # Its floating horizon can therefore differ from the replay feature by a
+    # few ulps even when it represents the identical endpoint.  The journey,
+    # anchor and endpoint timestamp are the actual unique replay identity;
+    # use them for the join and retain an explicit horizon consistency check.
+    key_columns = ["journey_id", "anchor_timestamp_ns", "end_timestamp_ns"]
+    predictions = predictions.copy()
+    for table, label in ((predictions, "predictions"), (frame, "facts")):
+        for column in key_columns[1:]:
+            table[column] = pd.to_numeric(table[column], errors="raise").astype(
+                np.int64
+            )
+        table["horizon_s"] = pd.to_numeric(table["horizon_s"], errors="raise")
+        if not np.isfinite(table["horizon_s"]).all():
+            raise ValueError(f"Stateful uncertainty {label} contain non-finite horizons.")
+        if table.duplicated(key_columns).any():
+            raise ValueError(
+                f"Stateful uncertainty {label} contain duplicate replay endpoints."
+            )
+
+    merged = predictions.merge(
+        frame,
+        on=key_columns,
+        how="inner",
+        suffixes=("_prediction", "_fact"),
+        validate="one_to_one",
+    )
     if len(merged) != len(predictions):
-        raise ValueError("Stateful OOF predictions could not be aligned to uncertainty facts.")
+        raise ValueError(
+            "Stateful OOF predictions could not be aligned to uncertainty facts: "
+            f"matched {len(merged):,} of {len(predictions):,} replay endpoints."
+        )
+
+    predicted_horizons = merged["horizon_s_prediction"].to_numpy(dtype=float)
+    factual_horizons = merged["horizon_s_fact"].to_numpy(dtype=float)
+    if not np.allclose(predicted_horizons, factual_horizons, rtol=1e-6, atol=1e-6):
+        maximum_difference = float(np.max(np.abs(predicted_horizons - factual_horizons)))
+        raise ValueError(
+            "Stateful OOF horizon values do not match their replay endpoints; "
+            f"maximum difference is {maximum_difference:.6f} seconds."
+        )
+
+    # Evaluation points are retained around each requested five-second horizon
+    # to absorb real replay-timing jitter.  Calibrating each raw float
+    # independently would yield many one-sample buckets and an unusable live
+    # schedule. Collapse each point to its intended five-second horizon before
+    # estimating the monotone residual quantiles used by the runtime.
+    horizon_step_s = 5.0
+    final_horizon_step = int(round(float(factual_horizons.max()) / horizon_step_s))
+    canonical_horizons = horizon_step_s * np.arange(
+        1, final_horizon_step + 1, dtype=float
+    )
+    nearest_indices = np.abs(
+        factual_horizons[:, None] - canonical_horizons[None, :]
+    ).argmin(axis=1)
+    nearest_horizons = canonical_horizons[nearest_indices]
+    maximum_offset = float(np.max(np.abs(factual_horizons - nearest_horizons)))
+    if maximum_offset > 0.25:
+        raise ValueError(
+            "Stateful OOF includes an endpoint outside the canonical-horizon "
+            f"tolerance; maximum offset is {maximum_offset:.6f} seconds."
+        )
+    merged["horizon_s"] = nearest_horizons
     horizons = np.sort(merged.horizon_s.unique())
     standard_deviation = np.asarray([np.quantile(np.abs(rows.actual_speed_mps - rows.prediction_speed_mps), 0.6827) for _, rows in merged.groupby("horizon_s", sort=True)])
     standard_deviation = np.maximum.accumulate(np.maximum(standard_deviation, 0.25))

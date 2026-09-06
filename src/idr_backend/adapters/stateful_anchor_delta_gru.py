@@ -330,6 +330,12 @@ class StatefulAnchorDeltaGruAdapter:
     def __init__(self, predictor: StatefulAnchorDeltaGruPredictor) -> None:
         self._predictor = predictor
 
+    @property
+    def model_id(self) -> str:
+        """Expose the immutable artifact identity required by composition checks."""
+
+        return self._predictor.model_id
+
     def predict(
         self,
         *,

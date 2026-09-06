@@ -82,6 +82,7 @@ def test_exported_stateful_adapter_carries_hidden_state_across_windows() -> None
     adapter = StatefulAnchorDeltaGruAdapter(
         StatefulAnchorDeltaGruPredictor.from_artifact_directory(ARTIFACT_DIRECTORY)
     )
+    assert adapter.model_id == "stateful_anchor_delta_gru_onnx_v1"
     first = adapter.predict(window=_window(0), context=_context())
     second = adapter.predict(window=_window(1), context=_context())
 

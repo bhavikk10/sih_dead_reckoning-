@@ -1,54 +1,61 @@
 # Intelligent Dead Reckoning Backend
 
-This repository is the Python backend scaffold for the Intelligent Dead Reckoning
+This repository contains the Python backend for the Intelligent Dead Reckoning
 (IDR) system proposed for SIH 2026 Problem Statement 26168.
 
 ## Current status
 
-The repository intentionally contains no navigation, filtering, machine-learning,
-map-processing, or data-ingestion implementation. It establishes ownership,
-module boundaries, configuration placeholders, and a verification plan before
-implementation begins.
+The deterministic core is implemented and can be exercised against paired raw
+phone/CAN recordings: phone IMU and GNSS are preprocessed, an ONNX velocity
+model and its uncertainty profile are applied, and a 15-state error-state EKF
+publishes navigation estimates. Incremental HMM map matching is also available
+as a downstream-only composition.
 
-## Owned scope
+The repository is a Python library and offline-replay tool today. It does
+**not** yet expose an HTTP or WebSocket service for a mobile client. Road
+context is in progress: its offline data, matching, and static-feature work is
+implemented, but its quantile model and EKF update are not yet part of runtime.
 
-The backend will own the deterministic navigation pipeline and two learned
-supporting engines:
+## Runtime data flow
 
-- IMU ingestion, synchronization, calibration, orientation, gravity removal,
-  navigation fusion, non-holonomic constraints, GNSS handoff, and map matching.
-- A standalone uncertainty engine that converts the externally supplied velocity
-  observation into a calibrated covariance or reliability signal.
-- A hybrid road-context engine that combines deterministic road rules with a
-  quantile-regression model.
+`IMU/GNSS -> preprocessing -> selected velocity + uncertainty -> 15-state`
+`error-state EKF -> navigation estimate -> incremental HMM map matching`
 
-The proposed data flow is:
+Phone GNSS and IMU are the only runtime inputs. Recorded CAN position and speed
+are held aside as offline replay references; they are never fed into fusion.
 
-`IMU/GNSS -> preprocessing -> 15-state error-state EKF -> road candidates ->`
-`road context -> EKF update -> incremental HMM map matching -> navigation estimate`
+## Repository map
 
-The previous HMM road belief supplies the next cycle's road candidates. This
-prevents the road-context engine from depending on a same-cycle map match that
-does not exist yet.
+- `src/idr_backend/sensors/` defines sensor/GNSS contracts and deterministic
+  preprocessing.
+- `src/idr_backend/adapters/` owns model/runtime adapters. The frontend adapter
+  remains a placeholder until a transport contract is agreed.
+- `src/idr_backend/pipeline/` composes preprocessing, selected velocity,
+  uncertainty, EKF fusion, and optional downstream map matching.
+- `src/idr_backend/fusion/` implements the error-state EKF, measurements,
+  constraints, covariance, and runtime policies.
+- `src/idr_backend/map_matching/` contains graph, candidate, scoring, and HMM
+  components.
+- `src/idr_backend/road_context/` contains in-progress offline preparation
+  contracts only.
+- `src/idr_backend/evaluation/` contains causal raw-replay evaluation.
+- `scripts/replay.py` runs one complete designated demo replay.
 
-## Explicitly excluded
+## Quick demo replay
 
-- Velocity-prediction model architecture, training, and inference. Another team
-  owns that component; this backend will later receive its output through an
-  adapter boundary.
-- Mobile/frontend implementation, map rendering, and UI integration.
-- Datasets, trained weights, live traffic services, native/mobile binaries, and
-  production algorithms.
-- Git initialization, remote configuration, virtual-environment creation, and
-  dependency installation.
+From the repository root in PowerShell:
 
-## Layout
+```powershell
+$env:PYTHONPATH = "src"
+python scripts/replay.py --journey Vta4 --output artifacts/demo_replays/Vta4.json
+```
 
-- `src/idr_backend/` contains the future backend packages.
-- `configs/` contains commented TOML templates only.
-- `docs/` records architecture, decisions, and the future verification strategy.
-- `scripts/` reserves future replay, training, and evaluation entry points.
-- `tests/` records the test structure and planned scenarios.
+`Vta4`, `Vta22`, and `Vta27` are agreed development/demo journeys. Use them for
+UI and integration demonstrations only; they are not held-out performance
+evidence.
 
-Read the package and directory README files before adding behavior. They describe
-the intended contracts without prematurely defining stable APIs.
+See [the backend and Flutter integration guide](docs/backend_flutter_integration.md)
+for the actual Python entry points, recommended future transport contract, data
+payloads, replay commands, and the road-context status. See
+[the road-context model document](docs/road_context_model.md) for its detailed
+methodology and gating plan.
