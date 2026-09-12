@@ -7,7 +7,7 @@ frames and covariance assumptions visible in one reviewable place.
 """
 
 from dataclasses import dataclass
-from math import cos, isfinite, radians, sin
+from math import atan2, cos, degrees, isfinite, radians, sin, sqrt
 
 import numpy as np
 
@@ -139,6 +139,40 @@ class LocalEnuReference:
         )
         return rotation_ecef_to_enu @ delta
 
+    def unproject(self, position_enu_m: tuple[float, float, float]) -> tuple[float, float, float]:
+        """Convert a local ENU position back to WGS-84 latitude, longitude, altitude.
+
+        This is the exact inverse counterpart to :meth:`project` for the small
+        local tangent plane owned by a navigation session.  Application adapters
+        use it to render a published EKF position on a WGS-84 map; fusion itself
+        continues to operate only in ENU metres.
+        """
+
+        enu = np.asarray(position_enu_m, dtype=float)
+        if enu.shape != (3,) or not np.all(np.isfinite(enu)):
+            raise ValueError("ENU position must be a finite three-vector.")
+
+        latitude_rad = radians(self.latitude_deg)
+        longitude_rad = radians(self.longitude_deg)
+        rotation_ecef_to_enu = np.asarray(
+            (
+                (-sin(longitude_rad), cos(longitude_rad), 0.0),
+                (
+                    -sin(latitude_rad) * cos(longitude_rad),
+                    -sin(latitude_rad) * sin(longitude_rad),
+                    cos(latitude_rad),
+                ),
+                (
+                    cos(latitude_rad) * cos(longitude_rad),
+                    cos(latitude_rad) * sin(longitude_rad),
+                    sin(latitude_rad),
+                ),
+            )
+        )
+        origin = _wgs84_ecef(self.latitude_deg, self.longitude_deg, self.altitude_m)
+        point = origin + rotation_ecef_to_enu.T @ enu
+        return _ecef_to_wgs84(point)
+
 
 def _wgs84_ecef(
     latitude_deg: float,
@@ -173,6 +207,52 @@ def _wgs84_ecef(
             * sin_latitude,
         )
     )
+
+
+def _ecef_to_wgs84(point_ecef_m: np.ndarray) -> tuple[float, float, float]:
+    """Invert WGS-84 ECEF coordinates using a bounded geodetic iteration."""
+
+    if point_ecef_m.shape != (3,) or not np.all(np.isfinite(point_ecef_m)):
+        raise ValueError("ECEF position must be a finite three-vector.")
+
+    x_m, y_m, z_m = (float(value) for value in point_ecef_m)
+    horizontal_m = sqrt(x_m * x_m + y_m * y_m)
+    if horizontal_m < 1e-9:
+        latitude_deg = 90.0 if z_m >= 0.0 else -90.0
+        polar_radius_m = _WGS84_SEMI_MAJOR_AXIS_M * sqrt(
+            1.0 - _WGS84_ECCENTRICITY_SQUARED
+        )
+        return latitude_deg, 0.0, abs(z_m) - polar_radius_m
+
+    longitude_rad = atan2(y_m, x_m)
+    latitude_rad = atan2(
+        z_m,
+        horizontal_m * (1.0 - _WGS84_ECCENTRICITY_SQUARED),
+    )
+    altitude_m = 0.0
+    for _ in range(8):
+        sin_latitude = sin(latitude_rad)
+        prime_vertical_radius = _WGS84_SEMI_MAJOR_AXIS_M / sqrt(
+            1.0 - _WGS84_ECCENTRICITY_SQUARED * sin_latitude**2
+        )
+        altitude_m = horizontal_m / cos(latitude_rad) - prime_vertical_radius
+        latitude_rad = atan2(
+            z_m,
+            horizontal_m
+            * (
+                1.0
+                - _WGS84_ECCENTRICITY_SQUARED
+                * prime_vertical_radius
+                / (prime_vertical_radius + altitude_m)
+            ),
+        )
+
+    sin_latitude = sin(latitude_rad)
+    prime_vertical_radius = _WGS84_SEMI_MAJOR_AXIS_M / sqrt(
+        1.0 - _WGS84_ECCENTRICITY_SQUARED * sin_latitude**2
+    )
+    altitude_m = horizontal_m / cos(latitude_rad) - prime_vertical_radius
+    return degrees(latitude_rad), degrees(longitude_rad), altitude_m
 
 
 def build_gnss_position_measurement(

@@ -22,7 +22,6 @@ from .selected_velocity import (
     build_selected_velocity_pre_ekf_pipeline,
     load_selected_velocity_runtime_components,
 )
-
 __all__ = [
     "DeterministicPipelineConfig",
     "DeterministicPreEkfPipeline",

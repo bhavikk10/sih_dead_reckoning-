@@ -4,8 +4,9 @@
 
 The backend owns deterministic phone-sensor navigation, selected ONNX velocity
 inference, uncertainty handling, and optional downstream HMM map matching. The
-Flutter/service layer is responsible only for ordered sensor delivery, session
-lifecycle, and presentation; it must not reproduce EKF or model logic.
+implemented FastAPI service owns the session lifecycle and transport validation;
+the BetterMaps React Native client is responsible only for ordered sensor
+delivery and presentation. It must not reproduce EKF or model logic.
 
 Road context is a separate, offline-only supporting engine at present. Its
 implemented code does not change the live deterministic pipeline or EKF.
@@ -34,6 +35,12 @@ implemented code does not change the live deterministic pipeline or EKF.
   journey-balanced weights;
 - out-of-fold metric, coverage, calibration-gate, and baseline experiment
   contracts.
+
+`src/idr_backend/pipeline/road_context.py` also implements a decision-only
+adapter: it turns an already-completed prior-cycle HMM feedback lookup into an
+auditable candidate mixture using static edge features, a compatible predictor,
+and deterministic rules. It has no EKF dependency, does not schedule updates,
+and is not called by the deterministic runtime yet.
 
 These components use CAN speed only as an offline target. They exclude IMU,
 GRU output, EKF speed, runtime CAN, and same-cycle HMM output from learned

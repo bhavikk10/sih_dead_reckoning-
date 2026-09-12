@@ -1,8 +1,8 @@
-"""Future frontend integration boundary.
+"""Boundary deliberately kept free of UI and transport code.
 
-TODO:
-- define a transport-neutral navigation-estimate handoff for teammates' application layer;
-- include estimate age, quality, mode, and diagnostic-safe status information;
-- avoid UI models, widgets, map rendering, or mobile lifecycle implementation;
-- agree the contract jointly with the frontend team before exposing a stable API.
+The implemented mobile JSON contract lives in :mod:`idr_backend.service.models`.
+The service converts a committed ``NavigationEstimate`` into a map-ready WGS-84
+estimate and owns one ``NavigationFusionPipeline`` per navigation session.
+Mobile applications must send raw sensor-frame IMU and WGS-84 GNSS; neither
+Flutter/React Native view models nor HTTP concerns belong in this adapter layer.
 """

@@ -18,3 +18,22 @@ models/checkpoints/
 models/exports/
 *.onnx
 /artifacts/
+
+.npm-cache/
+**/.npm-cache/
+**/.npm-cache/**
+
+# Crash & debug logs
+hs_err_pid*.log
+*.log
+
+# Chat dumps & scratch files
+chat*.md
+scratch/
+
+# Test cache
+.pytest_cache/
+
+# Frontend test sessions & artifacts
+bettermaps-main/bettermaps-main/captured_sessions/
+bettermaps-main/bettermaps-main/dist_test/

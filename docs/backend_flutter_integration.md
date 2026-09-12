@@ -1,179 +1,160 @@
-# Backend, Replay, and Flutter Integration Guide
+# Backend, Replay, and Mobile Integration Guide
 
-**Status:** The deterministic Python backend and offline replay are available.
-There is no HTTP/WebSocket server or Flutter application integration in this
-repository yet. Road context is **in progress** and is not in the live pipeline.
+**Status:** The deterministic Python runtime is available through a
+session-scoped FastAPI/WebSocket service. BetterMaps now has an opt-in React
+Native transport client; its screens and visual design are unchanged. Road
+context remains **in progress** and is disabled in the live service.
 
-## What exists today
-
-The backend receives chronological phone GNSS and raw phone IMU data, then:
+## What is live
 
 ```text
-GNSS + accelerometer/gyroscope callbacks
-  -> validation, unit/frame handling, synchronization
-  -> orientation, mounting calibration, gravity removal
-  -> causal clean-IMU windows
-  -> selected ONNX velocity inference + hash-bound uncertainty profile
-  -> 15-state error-state EKF + GNSS and non-holonomic updates
-  -> NavigationEstimate
-  -> optional downstream HMM map matching
+BetterMaps GNSS + raw sensor-frame accelerometer/gyroscope
+  -> one HTTP-created navigation session
+  -> ordered WebSocket messages
+  -> Python validation, calibration and clean-IMU preparation
+  -> reviewed ONNX velocity model + hash-bound uncertainty profile
+  -> 15-state error-state EKF
+  -> map-ready WGS-84 estimate returned over WebSocket
+  -> existing BetterMaps map/HUD/diagnostics
 ```
 
-The backend never uses CAN/reference data in this runtime path. CAN position
-and speed are used only by offline replay to calculate an error report.
+The server creates exactly one `NavigationFusionPipeline` for each drive.
+It never accepts CAN/reference data at runtime. Recorded CAN is used solely by
+offline replay reports. The server currently starts the reviewed
+`anchor_delta_gru` artifact, not the stateful 13.42 km/h development candidate:
+the latter did not pass downstream replay gates despite its grouped OOF score.
 
-The road-context work is separate and currently offline only: raw-dataset
-facts, candidate-match audit contracts, and static directed road features are
-implemented. Its quantile model, mixture, calibration, and EKF update do not
-exist in the runtime yet.
+## Service API
 
-## Repository map
+Run from `E:\dead reckoning`:
 
-| Location | Responsibility |
+```powershell
+$env:PYTHONPATH = "src"
+# Use 127.0.0.1 for local tools. Use 0.0.0.0 only when a phone on your trusted
+# development LAN needs to reach this computer.
+$env:IDR_HOST = "0.0.0.0"
+$env:IDR_PORT = "8000"
+python -m idr_backend.service
+```
+
+`GET /health` returns `{"status":"ok","roadContextEnabled":false}`.
+
+| Route | Purpose |
 |---|---|
-| `src/idr_backend/sensors/` | Immutable sensor/GNSS contracts, normalization, synchronization, orientation, mounting calibration, gravity removal, and quality gates. |
-| `src/idr_backend/adapters/` | Model-facing adapters. `frontend.py` is intentionally only a future contract placeholder. |
-| `src/idr_backend/pipeline/selected_velocity.py` | Builds the selected ONNX velocity model and the matching uncertainty profile as one validated pair. |
-| `src/idr_backend/pipeline/orchestrator.py` | Connects clean IMU windows, speed-anchor context, velocity inference, and uncertainty before fusion. |
-| `src/idr_backend/pipeline/fusion.py` | Owns causal GNSS queuing, EKF initialization/propagation/measurement updates, and published navigation state. |
-| `src/idr_backend/pipeline/map_matching.py` | Wraps fusion with a downstream-only incremental HMM map matcher. It cannot alter the current EKF state. |
-| `src/idr_backend/fusion/` | Error-state EKF state, propagation, covariance, NIS gating, GNSS/velocity measurements, non-holonomic constraint, and runtime state machine. |
-| `src/idr_backend/map_matching/` | Versioned road graph, candidate generation/scoring, and incremental Viterbi/HMM logic. |
-| `src/idr_backend/evaluation/replay.py` | Loads paired raw recordings and replays phone-only inputs through the complete deterministic path. |
-| `src/idr_backend/road_context/` | In-progress offline road-context data/matching/feature preparation; not a live feature. |
-| `scripts/replay.py` | Command-line wrapper for the agreed demo journeys. |
+| `POST /v1/navigation-sessions` | Create a clean session. Optional `sourceId` and `receiverId` default to `phone-primary`. |
+| `POST /v1/navigation-sessions/{id}/gnss` | Submit one GNSS fix over HTTP. Useful for diagnostics. |
+| `POST /v1/navigation-sessions/{id}/imu` | Submit one raw accelerometer or gyroscope callback over HTTP. Useful for diagnostics. |
+| `GET /v1/navigation-sessions/{id}/estimate` | Read the last committed estimate, or `estimate: null` before initialization. |
+| `WS /v1/navigation-sessions/{id}/stream` | Preferred live path: send GNSS/IMU envelopes and receive only newly committed estimates. |
+| `DELETE /v1/navigation-sessions/{id}` | Stop and release the drive session. |
 
-## Actual backend entry points
+The creation response includes `sessionId` and `websocketPath`. All JSON uses
+camelCase and rejects unknown fields, non-finite values, invalid units, frames,
+and malformed geographic bounds. The service does not return raw location or
+sensor traces in acknowledgements.
 
-These are Python methods, not network endpoints. A service layer must create
-one pipeline instance per mobile navigation session and call them in timestamp
-order.
+### WebSocket input and output
 
-| Entry point | Input | Result / responsibility |
-|---|---|---|
-| `NavigationFusionPipeline.push_gnss_fix` | `GnssFix` | Quality-assesses and queues a GNSS fix for the next valid IMU/EKF cycle. |
-| `NavigationFusionPipeline.push_raw_sample` | `RawSensorSample` | Accepts one accelerometer or gyroscope callback and returns zero or more `FusionPipelineResult` objects once an IMU pair is synchronized. |
-| `NavigationFusionPipeline.runtime_snapshot` | none | Reads the last atomically committed `NavigationEstimate` without adding data. |
-| `NavigationFusionPipeline.stop` | none | Closes the session runtime and returns its final snapshot. |
-| `NavigationMapMatchingPipeline.push_gnss_fix` / `.push_raw_sample` | same inputs | Performs the same fusion calls and then, only for a newly committed estimate, performs downstream HMM map matching. |
-| `NavigationMapMatchingPipeline.prior_feedback_for_cycle` | future cycle timestamp | Retrieves only a previously completed HMM belief. It exists for future road context and must not influence same-cycle fusion. |
-| `replay_journey` | recorded journey plus blackout scenario | Offline integration/evaluation path; never a mobile runtime endpoint. |
-
-`FusionPipelineResult.navigation_estimate` exposes the committed value intended
-for an application layer. It contains `timestamp_ns`, `mode`, ENU position and
-velocity, orientation, compact position/velocity covariance matrices, heading
-variance, and optional matched-road id/confidence.
-
-## Input contracts the Flutter side must preserve
-
-The service layer should translate platform callbacks directly into the Python
-contracts—without guessing units, coordinate frames, or timestamps.
-
-### IMU callback
-
-Each callback maps to `RawSensorSample`:
+GNSS events retain missing receiver quality as `null` rather than fabricating
+certainty:
 
 ```json
-{
-  "timestampNs": 123456789000,
-  "source": "phone",
-  "sourceId": "phone-primary",
-  "kind": "accelerometer",
-  "value": [0.12, -0.08, 9.72],
-  "unit": "m/s^2",
-  "frame": "sensor",
-  "vendorAccuracy": 3
-}
+{"type":"gnss","fix":{"timestampNs":1234000000,"receiverId":"phone-primary","latitudeDeg":12.9716,"longitudeDeg":77.5946,"altitudeM":920.0,"horizontalAccuracyM":6.0,"verticalAccuracyM":9.0,"speedMps":11.4,"speedAccuracyMps":null,"courseOverGroundRad":1.57,"courseAccuracyRad":null}}
 ```
 
-For gyroscope callbacks, use `kind: "gyroscope"`, `unit: "rad/s"`, and the
-same three-axis ordering delivered by the device. `timestampNs` must come from
-one monotonic session clock—not wall-clock time. The platform bridge must not
-mix Android/iOS elapsed clocks, reorder callbacks, relabel uncalibrated axes as
-vehicle axes, or invent samples when a callback is missing.
-
-### GNSS callback
-
-Each fix maps to `GnssFix`:
+Each physical IMU callback is sent in its original phone sensor frame:
 
 ```json
-{
-  "timestampNs": 123456789000,
-  "receiverId": "phone-primary",
-  "latitudeDeg": 12.9716,
-  "longitudeDeg": 77.5946,
-  "altitudeM": 920.0,
-  "horizontalAccuracyM": 6.0,
-  "verticalAccuracyM": 9.0,
-  "speedMps": 11.4,
-  "speedAccuracyMps": 0.8,
-  "courseOverGroundRad": 1.57,
-  "courseAccuracyRad": 0.2
-}
+{"type":"imu","sample":{"timestampNs":1234005000,"source":"phone","sourceId":"phone-primary","kind":"accelerometer","value":[0.12,-0.08,9.72],"unit":"m/s^2","frame":"sensor","vendorAccuracy":null}}
 ```
 
-Optional accuracy/motion fields must stay `null` when the device does not
-provide them. They must not be replaced by zero, because zero means impossible
-certainty. Latitude/longitude stay WGS-84 degrees at this boundary; the backend
-creates its local ENU frame internally.
+For gyroscope, use `kind: "gyroscope"` and `unit: "rad/s"`. Every timestamp
+must come from one monotonic session clock; send events in order within each
+GNSS/IMU stream. The backend pairs accelerometer and gyroscope samples itself.
 
-## Flutter integration required
+After an EKF state commits, the service sends:
 
-1. **A transport/service wrapper.** This repository has no FastAPI, Flask,
-   HTTP, WebSocket, authentication, or session store. Add a thin server that
-   owns a pipeline object per active session; do not put EKF or model logic in
-   Dart.
-2. **A platform sensor bridge.** Flutter must obtain raw accelerometer,
-   gyroscope, and location callbacks from Android/iOS, preserve their monotonic
-   timestamp and units, and serialise the fields above.
-3. **Session lifecycle.** Start a new backend session when navigation begins;
-   terminate it on stop, app logout, or unrecoverable ordering/clock failure.
-   Do not reuse a filter instance for a later drive.
-4. **Ordered, bounded delivery.** Buffer briefly to handle the two IMU callback
-   streams, preserve chronological order per session, use bounded queues, and
-   surface dropped/late samples to diagnostics rather than silently replaying
-   stale data.
-5. **Output mapping.** Render the returned ENU estimate only after converting
-   it to the map/display coordinate system associated with that session. Show
-   `mode` (`gnss_aided`, `dead_reckoning`, or `recovery`) and quality/age so a
-   user can distinguish an extrapolated state from a GNSS-aided one.
-6. **Permissions and operating conditions.** Implement foreground/background
-   location, motion-sensor permissions, battery policy, reconnect behaviour,
-   TLS/authentication, device identity, and privacy retention in the app and
-   service layer. None of these are currently provided here.
+```json
+{"type":"estimate","estimate":{"timestampNs":1234010000,"latitudeDeg":12.97161,"longitudeDeg":77.59459,"altitudeM":920.3,"speedMps":11.1,"headingDeg":88.2,"horizontalSigmaM":4.8,"verticalSigmaM":7.2,"mode":"gnss_aided","isDeadReckoning":false,"mapMatchConfidence":null}}
+```
 
-## Proposed transport endpoints (not implemented)
+Validation/rejection messages have `type: "error"`, a stable `code`, and a
+human-readable message. A client should surface diagnostics and drop/recover
+cleanly; it must not resend stale samples into a new session.
 
-The following is a recommended contract for the service wrapper. It is not an
-existing API and must not be described to the frontend team as already live.
+## BetterMaps integration
 
-| Proposed route | Purpose |
-|---|---|
-| `POST /v1/navigation-sessions` | Create a session, declare device/source ids and any graph/map configuration. |
-| `POST /v1/navigation-sessions/{sessionId}/gnss` | Submit one ordered GNSS fix. |
-| `POST /v1/navigation-sessions/{sessionId}/imu` | Submit one ordered raw accelerometer or gyroscope callback. |
-| `GET /v1/navigation-sessions/{sessionId}/estimate` | Read the latest committed estimate and its mode/diagnostics. |
-| `WS /v1/navigation-sessions/{sessionId}/estimates` | Stream only newly committed navigation estimates to Flutter. |
-| `DELETE /v1/navigation-sessions/{sessionId}` | Stop and release the owned pipeline instance. |
+The frontend integration is in:
 
-The service should validate payload schema before constructing backend
-dataclasses, return clear 4xx errors for bad units/frames/timestamps, keep
-per-session ordering and limits, and avoid returning raw sensor traces by
-default. The current `adapters/frontend.py` is intentionally the place to turn
-the backend estimate into a stable response schema once that contract is agreed.
+- `bettermaps-main/bettermaps-main/src/services/idr/RemoteIdrPositioningEngine.ts`
+- `bettermaps-main/bettermaps-main/src/core/state/NavigationManager.ts`
 
-## Designated demo journeys and replay commands
+If `EXPO_PUBLIC_IDR_BACKEND_URL` is absent, BetterMaps keeps its existing
+on-device positioning stack exactly as before. If it is set, the app creates a
+server session, streams GNSS and both raw IMU callbacks over the WebSocket, and
+renders only server-committed WGS-84 estimates through the same map/HUD path.
+The UI layout, map, controls, and diagnostics components were not redesigned.
 
-`Vta4`, `Vta22`, and `Vta27` are the agreed demonstration journeys. They are
-development data used during model work, so a replay of them is suitable for a
-functional/demo presentation but is **not** a held-out accuracy result.
+Copy `.env.example` to `.env` in `bettermaps-main/bettermaps-main` and set the
+PC's reachable address, never `127.0.0.1` for a physical phone:
 
-The default replay command uses the reviewed deterministic EKF profile,
-`anchor_delta_gru.onnx`, and the matching deterministic uncertainty profile
-from `artifacts/anchored_velocity_comparison`. It applies a 30-second GNSS
-warm-up, a 60-second scheduled GNSS blackout, then 30 seconds of recovery.
+```dotenv
+EXPO_PUBLIC_IDR_BACKEND_URL=http://192.168.1.10:8000
+# Development LAN only. Production must use authenticated HTTPS/WSS instead.
+EXPO_PUBLIC_IDR_ALLOW_CLEARTEXT=true
+```
 
-Run from `E:\dead reckoning` in PowerShell:
+Because the clear-text Android setting is a native configuration, rebuild the
+custom Android development client after changing it:
+
+```powershell
+cd "E:\dead reckoning\bettermaps-main\bettermaps-main"
+npx expo prebuild --platform android
+npx expo run:android --device
+```
+
+For an Android emulator, use `http://10.0.2.2:8000`. For a physical Android
+phone, connect the phone and computer to the same trusted Wi-Fi (or configure
+USB reverse explicitly) and use the PC LAN address. Production must add TLS,
+authentication/authorization, session expiry, rate limiting, and privacy-safe
+observability before exposing the service beyond a development network.
+
+### Present phone-sensor limitation
+
+Expo's location callback exposes position, coarse accuracy, speed, and heading,
+but not GNSS speed accuracy or bearing/course accuracy. BetterMaps therefore
+preserves those two unavailable values as `null`; it does **not** invent them.
+That is correct transport behavior, but it prevents the deterministic backend's
+quality-gated mounting/velocity path from reaching its fully calibrated live
+configuration on an Expo-only client. A native Android location bridge that
+exposes `Location.getSpeedAccuracyMetersPerSecond()` and bearing accuracy (or
+an equivalent trusted source) is required before claiming calibrated live-phone
+navigation performance. This does not affect offline VTA replays, whose test
+harness provides documented replay-only quality assumptions.
+
+## Recorded service and replay verification
+
+`Vta4`, `Vta22`, and `Vta27` are development/demo journeys, not held-out
+performance data. They are appropriate for a functional demo, and must not be
+reported as generalization results.
+
+The service-contract verification streams recorded phone GNSS/IMU through the
+same HTTP session creation and WebSocket event path used by BetterMaps:
+
+```powershell
+cd "E:\dead reckoning"
+$env:PYTHONPATH = "src"
+python scripts/verify_service_demo_stream.py --journey Vta4
+python scripts/verify_service_demo_stream.py --journey Vta22
+python scripts/verify_service_demo_stream.py --journey Vta27
+```
+
+These checks verify sensor ordering, session lifecycle, and committed estimate
+delivery. They do not use CAN as an input. They use documented *replay-only*
+speed/course uncertainty assumptions because the recorded VTA phone files do
+not contain those facts; do not transfer those assumptions to a live device.
+
+For the full blackout/recovery evaluation (separate from transport testing):
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -182,57 +163,16 @@ python scripts/replay.py --journey Vta22 --output artifacts/demo_replays/Vta22.j
 python scripts/replay.py --journey Vta27 --output artifacts/demo_replays/Vta27.json
 ```
 
-Each invocation feeds the full recorded phone callback stream through
-preprocessing, ONNX velocity inference, uncertainty estimation, EKF fusion,
-and recovery. It writes the complete report as JSON and prints useful logs:
-blackout velocity MAE, blackout endpoint relative position error, accepted
-velocity-model updates, and whether the replay was valid for scoring.
+Current baseline reports exist in `artifacts/demo_replays/`. They show that the
+three journeys exercise the pipeline but are uneven: `Vta4` is poor under its
+scheduled blackout, `Vta22` is materially better, and `Vta27` lacks initialized
+blackout scoring samples. Do not present them as a single accuracy claim.
 
-For a shorter smoke run, retain enough data for the complete scenario and set
-an explicit end time:
+## Road context
 
-```powershell
-$env:PYTHONPATH = "src"
-python scripts/replay.py --journey Vta4 --maximum-replay-duration-s 150
-```
-
-The offline replay is the closest current equivalent to a “mock backend
-session.” It does not start a network server and it does not use CAN labels as
-inputs.
-
-### Experimental stateful artifact
-
-The separately exported stateful candidate has a 13.42 km/h grouped
-out-of-fold macro MAE from its development search. That is a model-level
-development statistic, not a downstream promotion result: its raw replay has
-not met the gate to replace the reviewed default. It is therefore opt-in for
-engineering comparison only, never the default service/demo configuration.
-
-If that exact artifact needs to be exercised through the same complete replay,
-make every part of the pair explicit:
-
-```powershell
-$env:PYTHONPATH = "src"
-python scripts/replay.py --journey Vta4 `
-  --velocity-model-family stateful_anchor_delta_gru `
-  --velocity-artifact-directory artifacts/final_velocity_search_v2/stateful_macro_mae_13_42_experimental `
-  --uncertainty-artifact-directory artifacts/final_velocity_search_v2/stateful_macro_mae_13_42_experimental/uncertainty `
-  --uncertainty-profile-filename deterministic_velocity_uncertainty.json
-```
-
-Do not mix an ONNX file, metadata file, or uncertainty profile from different
-artifact directories; the backend's strict hash and model-id checks are meant
-to reject precisely that mismatch.
-
-## Before calling the mobile integration complete
-
-- Implement and test the proposed service wrapper with one pipeline per
-  session.
-- Agree and version a JSON/protobuf response schema in `adapters/frontend.py`.
-- Add end-to-end tests for ordering, duplicate callbacks, missing IMU pairs,
-  invalid units/frames, reconnects, and session cleanup.
-- Decide map/ENU origin ownership and map-matching graph selection per session.
-- Add observability that records safe aggregate dispositions and latency without
-  logging raw location/sensor data by default.
-- Keep road context disabled until its calibration and downstream replay gates
-  are complete.
+Road context is intentionally not part of any endpoint, mobile message, or EKF
+update today. Its offline data/split/features/quantile/mixture/evaluation work
+is in `src/idr_backend/road_context/` and the one-time workflow notebook.
+Enablement requires calibrated held-out and spatial-held-out uncertainty plus
+downstream replay evidence. Until then, `/health` truthfully reports
+`roadContextEnabled: false`.

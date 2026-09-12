@@ -1,8 +1,9 @@
 # Road-Context Speed-Prior Model: Design and Methodology
 
-**Status:** In progress — offline dataset, map-matching, and directed static
-feature contracts are implemented; the quantile model and all runtime fusion
-stages are not yet implemented.
+**Status:** In progress — the offline dataset/matching/static-feature layer,
+quantile-model contracts, deterministic rules, candidate-mixture math, grouped
+evaluation, and calibration gate are implemented. No real-data model has been
+selected or exported, and all runtime/EKF fusion stages remain unimplemented.
 **Date:** 2026-09-06  
 **Scope:** Offline data preparation, candidate-level speed-quantile modelling,
 deterministic safety rules, runtime aggregation, EKF integration, validation,
@@ -49,14 +50,24 @@ The following offline-only pieces now exist under
 - static OSM/road-graph features for each *legal directed* traversal, including
   road class, speed-limit availability, lane count, link/tunnel/bridge/
   roundabout flags, length, curvature, and local graph degree.
+- deterministic q10/q50/q90 validation/rules and the HMM-weighted candidate
+  mixture, including within-candidate and between-candidate uncertainty;
+- a road-class empirical quantile baseline and a static-feature LightGBM
+  q10/q50/q90 predictor with unknown-class handling and non-crossing outputs;
+- journey-held-out and directed-edge-held-out split plans, fold-local
+  journey-balanced weights, out-of-fold metrics, interval-coverage calibration
+  gates, and an empirical-baseline experiment runner.
 
 This work is deliberately parallel to the deterministic navigation pipeline.
 It has not changed live preprocessing, the selected velocity ONNX path, the
-EKF, or map-matching behaviour. There is currently no trained road-context
-quantile artifact, calibration result, candidate-mixture runtime component, or
-road-context EKF measurement. Until those stages pass the gates in this
-document, road context must be described as **in progress**, not as a deployed
-backend capability.
+EKF, or map-matching behaviour. A decision-only runtime candidate adapter now
+exists at `src/idr_backend/pipeline/road_context.py`: it accepts only completed
+prior-cycle HMM feedback and produces an auditable mixture decision. It neither
+injects an EKF measurement nor schedules any update. There is still no
+real-data experiment result, calibrated/exported road-context artifact, shadow
+replay, or road-context EKF measurement. Until those stages pass the gates in
+this document, road context must be described as **in progress**, not as a
+deployed backend capability.
 
 ## 2. What the current dataset actually contains
 
@@ -402,7 +413,12 @@ synthetic rows must never silently dominate first-party calibration.
 
 ### 7.1 Baselines
 
-Before learned models, implement:
+The global/road-class empirical baseline stage is implemented through the
+road-class baseline, which retains a global fallback. It is required for
+debugging split/weight/calibration logic before assessing the learned model.
+Potential time-bucket and speed-limit-only baselines remain future ablations.
+
+Candidate baselines are:
 
 - global empirical speed quantiles;
 - road-class empirical quantiles;
@@ -414,9 +430,15 @@ The learned model must improve on these baselines under the same grouped splits.
 
 ### 7.2 Candidate models
 
-Use a common interface to compare LightGBM and XGBoost gradient-boosted trees.
-This is tabular, heterogeneous, missing-value-heavy data; a deep recurrent or
-graph neural network is not justified for the first production attempt.
+The initial learned implementation is LightGBM with three independent quantile
+objectives. It operates only on the declared static feature schema, preserves
+missing numeric OSM values, encodes unseen road classes safely, and orders the
+three outputs before publication. This is tabular, heterogeneous,
+missing-value-heavy data; a deep recurrent or graph neural network is not
+justified for the first production attempt.
+
+XGBoost remains an optional challenger and must use the same grouped protocol
+before being compared or selected.
 
 Train independent or jointly wrapped quantile objectives for:
 
@@ -774,7 +796,8 @@ not a dramatic standalone speed-model score.
 - Import/version the relevant OSM extract.
 - Build offline trajectory-level road matches.
 - Export a versioned road-context table and audit report.
-- Implement global, road-class, time-bucket, and rule-only baselines.
+- Run the implemented road-class baseline on real data; add time-bucket and
+  rule-only ablations only if they help diagnose the measured result.
 
 ### Phase B: Contracts, features, and rules
 
@@ -784,9 +807,16 @@ not a dramatic standalone speed-model score.
 - Implement map/belief/OSM/physical gates.
 - Add unit tests for all omission and mixture cases.
 
+The contracts, static feature extraction, curvature/topology fields, rules,
+mixture math, splits, weights, and their unit tests are complete. Distance to a
+junction/signal remains deferred because the current matching contract does not
+retain a reliable along-edge offset.
+
 ### Phase C: Quantile-model experiment
 
-- Compare LightGBM and XGBoost under identical grouped folds.
+- Run the implemented empirical baseline and LightGBM models under identical
+  grouped folds.
+- Add XGBoost only as a later equivalent-protocol challenger.
 - Evaluate 2-second versus 5-second cadence.
 - Evaluate journey-only versus journey-plus-edge weighting.
 - Calibrate quantiles and aggregate variance using training-side grouped data.

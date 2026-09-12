@@ -12,5 +12,11 @@ proposed runtime feature is already enabled.
   experiment, replay, and deployment evidence.
 - `road_context_model.md` is the detailed methodology, implementation boundary,
   and deployment-gate document for the in-progress road-context engine.
-- `backend_flutter_integration.md` documents current Python entry points,
-  replay commands, and the proposed—not implemented—mobile transport contract.
+- `backend_flutter_integration.md` documents the implemented FastAPI/WebSocket
+  service, BetterMaps mobile transport, replay commands, and the remaining
+  live-device limitations.
+
+The one-time offline road-context procedure is staged in
+`../notebooks/road_context_one_time_workflow.ipynb`. It is deliberately blocked
+at the point where a versioned road graph and trajectory-level candidate-match
+artifact are required; it must not be treated as an EKF enablement notebook.

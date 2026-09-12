@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from .evaluation import (
 from .features import RoadContextFeatureDataset
 from .quantile_model import (
     RoadClassEmpiricalQuantileBaseline,
+    RoadContextQuantilePredictor,
     fit_road_class_empirical_quantile_baseline,
 )
 from .splits import (
@@ -32,7 +34,7 @@ class RoadContextFittedFold:
     """One training-only fitted model and its independent validation result."""
 
     fold: RoadContextFold
-    model: RoadClassEmpiricalQuantileBaseline
+    model: RoadContextQuantilePredictor
     training_weights: FoldTrainingWeights
     evaluation: RoadContextFoldEvaluation
 
@@ -85,14 +87,21 @@ class RoadContextExperimentResult:
             )
 
 
-def run_road_class_empirical_quantile_experiment(
+RoadContextQuantileFitFunction = Callable[
+    [RoadContextFeatureDataset, str, tuple[float, ...]],
+    RoadContextQuantilePredictor,
+]
+
+
+def run_road_context_quantile_experiment(
     *,
     dataset: RoadContextFeatureDataset,
     split_plan: RoadContextSplitPlan,
-    model_id_prefix: str = "road_class_empirical_quantiles_v1",
+    model_id_prefix: str,
+    fit_model: RoadContextQuantileFitFunction,
     weight_config: RoadContextWeightConfig = RoadContextWeightConfig(),
 ) -> RoadContextExperimentResult:
-    """Run a fully leakage-safe empirical-baseline experiment.
+    """Run one quantile-model family under a fully leakage-safe protocol.
 
     Each fold fits only on its training rows and their fold-local weights.
     Validation targets are used only after prediction, for offline metrics.
@@ -117,11 +126,16 @@ def run_road_class_empirical_quantile_experiment(
             fold,
             config=weight_config,
         )
-        model = fit_road_class_empirical_quantile_baseline(
+        expected_model_id = f"{model_id_prefix}_fold_{fold.fold_index}"
+        model = fit_model(
             train_dataset,
-            model_id=f"{model_id_prefix}_fold_{fold.fold_index}",
-            sample_weight=training_weights.weights,
+            expected_model_id,
+            training_weights.weights,
         )
+        if model.metadata.model_id != expected_model_id:
+            raise ValueError("Fold model returned an unexpected model_id.")
+        if model.metadata.graph_id != dataset.graph_id:
+            raise ValueError("Fold model graph_id must match the feature dataset.")
 
         predictions = model.predict(validation_dataset.model_features)
         evaluation = evaluate_validation_fold(
@@ -161,6 +175,35 @@ def run_road_class_empirical_quantile_experiment(
         fitted_folds=tuple(fitted_folds),
         evaluation_report=evaluation_report,
         oof_predictions=oof_predictions,
+    )
+
+
+def run_road_class_empirical_quantile_experiment(
+    *,
+    dataset: RoadContextFeatureDataset,
+    split_plan: RoadContextSplitPlan,
+    model_id_prefix: str = "road_class_empirical_quantiles_v1",
+    weight_config: RoadContextWeightConfig = RoadContextWeightConfig(),
+) -> RoadContextExperimentResult:
+    """Run the empirical baseline through the shared grouped-fold protocol."""
+
+    def fit_empirical_model(
+        training_dataset: RoadContextFeatureDataset,
+        model_id: str,
+        sample_weight: tuple[float, ...],
+    ) -> RoadClassEmpiricalQuantileBaseline:
+        return fit_road_class_empirical_quantile_baseline(
+            training_dataset,
+            model_id=model_id,
+            sample_weight=sample_weight,
+        )
+
+    return run_road_context_quantile_experiment(
+        dataset=dataset,
+        split_plan=split_plan,
+        model_id_prefix=model_id_prefix,
+        fit_model=fit_empirical_model,
+        weight_config=weight_config,
     )
 
 
@@ -223,6 +266,8 @@ def _build_fold_oof_frame(
 __all__ = [
     "RoadContextExperimentResult",
     "RoadContextFittedFold",
+    "RoadContextQuantileFitFunction",
+    "run_road_context_quantile_experiment",
     "run_road_class_empirical_quantile_experiment",
 ]
 

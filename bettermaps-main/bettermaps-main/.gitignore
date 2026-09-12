@@ -1,0 +1,81 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env
+.env*.local
+.env.production
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+
+# Python cache & build
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+
+# Logs & temp media
+*.log
+.tempmediaStorage/
+scratch/
+
+# Phone screenshots & UI captures (do not push screenshots per user rule)
+screenshot_*.*
+screenshots/
+*_screenshot.*
+demo_*.png
+emulator_*.png
+screen_*.png
+scratch_screen.png
+dump.xml
+*.png
+artifacts/**/screenshots/
+dist_test/
+
+# Large zip archives
+*.zip
+
+# Raw IO-VNBD dataset (keep local only per IDR handover; do not commit)
+research/IO-VNBD/
